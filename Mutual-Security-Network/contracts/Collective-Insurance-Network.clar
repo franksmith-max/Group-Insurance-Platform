@@ -35,6 +35,7 @@
 (define-constant ERR-PARAMETER-INVALID (err u110))
 (define-constant ERR-DESCRIPTION-TOO-SHORT (err u111))
 (define-constant ERR-RECIPIENT-INVALID (err u112))
+(define-constant ERR-CLAIM-NOT-FOUND (err u113))
 
 ;; DATA STRUCTURES
 
@@ -302,10 +303,15 @@
 ;; Resolve insurance claim (administrative function)
 (define-public (resolve-claim-request (request-identifier uint) (approval-decision bool))
   (let (
-    (claim-data (unwrap! (get-claim-information request-identifier) ERR-MEMBER-NOT-EXISTS))
+    ;; First, retrieve the claim data and validate it exists
+    (claim-data (unwrap! (get-claim-information request-identifier) ERR-CLAIM-NOT-FOUND))
     (beneficiary (get requesting-member claim-data))
     (payout-amount (get requested-amount claim-data))
     (status-check (get resolution-status claim-data))
+    (claim-narrative (get claim-narrative claim-data))
+    (submission-height (get submission-height claim-data))
+    ;; Create validated claim key
+    (validated-claim-key { request-identifier: request-identifier })
   )
     ;; Verify administrative privileges
     (asserts! (is-eq tx-sender protocol-administrator) ERR-UNAUTHORIZED-ACCESS)
@@ -322,10 +328,16 @@
         ;; Execute approved claim payout
         (try! (as-contract (stx-transfer? payout-amount (as-contract tx-sender) beneficiary)))
         
-        ;; Mark claim as approved
+        ;; Mark claim as approved using validated key and reconstructed data
         (map-set insurance-claims
-          { request-identifier: request-identifier }
-          (merge claim-data { resolution-status: u"approved" })
+          validated-claim-key
+          { 
+            requesting-member: beneficiary,
+            requested-amount: payout-amount,
+            claim-narrative: claim-narrative,
+            submission-height: submission-height,
+            resolution-status: u"approved"
+          }
         )
         
         ;; Update protocol tracking
@@ -335,10 +347,16 @@
         (ok true)
       )
       (begin
-        ;; Mark claim as denied
+        ;; Mark claim as denied using validated key and reconstructed data
         (map-set insurance-claims
-          { request-identifier: request-identifier }
-          (merge claim-data { resolution-status: u"denied" })
+          validated-claim-key
+          { 
+            requesting-member: beneficiary,
+            requested-amount: payout-amount,
+            claim-narrative: claim-narrative,
+            submission-height: submission-height,
+            resolution-status: u"denied"
+          }
         )
         
         (ok false)
